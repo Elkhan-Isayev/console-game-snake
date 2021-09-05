@@ -5,7 +5,7 @@ It's programm that will help you have fun.
 1. Download project to your computer 
 2. Open Run folder
 3. Run game-snake.exe file
-4. Ñhange your keyboard language to english
+4. Change your keyboard language to english
 5. Use W, A, S, D btns for control
 6. Enjoy :)
 
