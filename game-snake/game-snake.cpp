@@ -1,160 +1,238 @@
-﻿// game-snake.cpp : This file contains the 'main' function. Program execution begins and ends there.
-//
+// game-snake.cpp : A small cross-platform console Snake game.
+// Program execution begins and ends in main().
 
 #include <iostream>
-#include <conio.h>
-#include <Windows.h>
+#include <cstdlib>
+#include <ctime>
 
-#pragma region 	�nnouncement
+#ifdef _WIN32
+    #include <conio.h>
+    #include <windows.h>
+#else
+    #include <unistd.h>
+    #include <termios.h>
+    #include <fcntl.h>
+#endif
+
 using namespace std;
+
+#pragma region Platform helpers
+
+// Returns true if a key is currently waiting in the input buffer.
+static bool keyHit() {
+#ifdef _WIN32
+    return _kbhit();
+#else
+    termios oldt{}, newt{};
+    tcgetattr(STDIN_FILENO, &oldt);
+    newt = oldt;
+    newt.c_lflag &= ~(ICANON | ECHO);
+    tcsetattr(STDIN_FILENO, TCSANOW, &newt);
+
+    int oldf = fcntl(STDIN_FILENO, F_GETFL, 0);
+    fcntl(STDIN_FILENO, F_SETFL, oldf | O_NONBLOCK);
+
+    int ch = getchar();
+
+    tcsetattr(STDIN_FILENO, TCSANOW, &oldt);
+    fcntl(STDIN_FILENO, F_SETFL, oldf);
+
+    if (ch != EOF) {
+        ungetc(ch, stdin);
+        return true;
+    }
+    return false;
+#endif
+}
+
+// Reads a single character without waiting for Enter.
+static int readKey() {
+#ifdef _WIN32
+    return _getch();
+#else
+    termios oldt{}, newt{};
+    tcgetattr(STDIN_FILENO, &oldt);
+    newt = oldt;
+    newt.c_lflag &= ~(ICANON | ECHO);
+    tcsetattr(STDIN_FILENO, TCSANOW, &newt);
+
+    int ch = getchar();
+
+    tcsetattr(STDIN_FILENO, TCSANOW, &oldt);
+    return ch;
+#endif
+}
+
+// Clears the terminal screen.
+static void clearScreen() {
+#ifdef _WIN32
+    system("cls");
+#else
+    // ANSI: move cursor to home and clear screen.
+    cout << "\033[2J\033[H";
+#endif
+}
+
+// Sleeps for the given number of milliseconds.
+static void sleepMs(int ms) {
+#ifdef _WIN32
+    Sleep(ms);
+#else
+    usleep(ms * 1000);
+#endif
+}
+
+#pragma endregion
+
+#pragma region Game state
+
 bool gameOver;
 const int width = 20;
 const int height = 20;
-int x, y, fruitx, fruity, score;
+int x, y, fruitX, fruitY, score;
 int tailX[100], tailY[100];
 int nTail;
-enum eDirections { STOP = 0, LEFT, RIGHT, UP, DOWN };
-eDirections dir;
+enum eDirection { STOP = 0, LEFT, RIGHT, UP, DOWN };
+eDirection dir;
+
 #pragma endregion
 
-void Setup() { // options
-	gameOver = false;
-	dir = STOP;
-	x = width / 2 - 1;
-	y = height / 2 - 1;
-	fruitx = rand() % width;
-	fruity = rand() % height;
-	score = 0;
+// Places a fruit on a random free cell inside the playing field.
+void SpawnFruit() {
+    fruitX = rand() % width;
+    fruitY = rand() % height;
 }
 
-void Draw() { // map
-	system("cls");
-
-	for (int i = 0; i < width + 1; i++) {
-		cout << "#";
-	}
-
-	cout << endl;
-
-	for (int i = 0; i < height; i++) {
-
-		for (int j = 0; j < width; j++) {
-
-			if (j == 0 || j == width - 1)
-				cout << "#";
-			if (i == y && j == x)             // <- esli osibka est to tut - poslanie sebe na budusee)))  
-				cout << "0";
-			else
-				if (i == fruity && j == fruitx)
-					cout << "F";
-				else {
-					bool print = false;
-					for (int k = 0; k < nTail; k++) {
-						if (tailX[k] == j && tailY[k] == i) {
-							print = true;
-							cout << 'o';
-						}
-					}
-					if (!print)
-						cout << " ";
-				}
-
-		}
-		cout << endl;
-	}
-
-	for (int i = 0; i < width + 1; i++)
-		cout << "#";
-	cout << endl;
-	cout << "SCORE: " << score << endl;
+void Setup() {
+    gameOver = false;
+    dir = STOP;
+    x = width / 2;
+    y = height / 2;
+    nTail = 0;
+    score = 0;
+    SpawnFruit();
 }
 
-void input() {
-	if (_kbhit()) {
+void Draw() {
+    clearScreen();
 
-		switch (_getch()) {
-		case 'a':
-			dir = LEFT;
-			break;
+    // Top wall.
+    for (int i = 0; i < width + 2; i++)
+        cout << "#";
+    cout << "\n";
 
-		case 'd':
-			dir = RIGHT;
-			break;
+    for (int i = 0; i < height; i++) {
+        for (int j = 0; j < width; j++) {
+            if (j == 0)
+                cout << "#"; // left wall
 
-		case 'w':
-			dir = UP;
-			break;
+            if (i == y && j == x)
+                cout << "O"; // snake head
+            else if (i == fruitY && j == fruitX)
+                cout << "F"; // fruit
+            else {
+                bool printed = false;
+                for (int k = 0; k < nTail; k++) {
+                    if (tailX[k] == j && tailY[k] == i) {
+                        cout << "o"; // snake body
+                        printed = true;
+                        break;
+                    }
+                }
+                if (!printed)
+                    cout << " ";
+            }
 
-		case 's':
-			dir = DOWN;
-			break;
+            if (j == width - 1)
+                cout << "#"; // right wall
+        }
+        cout << "\n";
+    }
 
-		case 'x':
-			gameOver = true;
-			break;
-		}
-	}
+    // Bottom wall.
+    for (int i = 0; i < width + 2; i++)
+        cout << "#";
+    cout << "\n";
+
+    cout << "SCORE: " << score << "\n";
+    cout << "Controls: W/A/S/D to move, X to quit\n";
+}
+
+void Input() {
+    if (keyHit()) {
+        switch (readKey()) {
+        case 'a': case 'A':
+            if (dir != RIGHT) dir = LEFT;
+            break;
+        case 'd': case 'D':
+            if (dir != LEFT) dir = RIGHT;
+            break;
+        case 'w': case 'W':
+            if (dir != DOWN) dir = UP;
+            break;
+        case 's': case 'S':
+            if (dir != UP) dir = DOWN;
+            break;
+        case 'x': case 'X':
+            gameOver = true;
+            break;
+        }
+    }
 }
 
 void Logic() {
-	int prevX = tailX[0];
-	int prevY = tailY[0];
-	int prev2X, prev2Y;
-	tailX[0] = x;
-	tailY[0] = y;
-	for (int i = 1; i < nTail; i++) {
-		prev2X = tailX[i];
-		prev2Y = tailY[i];
-		tailX[i] = prevX;
-		tailY[i] = prevY;
-		prevX = prev2X;
-		prevY = prev2Y;
-	}
-	switch (dir) {
+    // Shift the tail so each segment follows the one in front of it.
+    int prevX = tailX[0];
+    int prevY = tailY[0];
+    int prev2X, prev2Y;
+    tailX[0] = x;
+    tailY[0] = y;
+    for (int i = 1; i < nTail; i++) {
+        prev2X = tailX[i];
+        prev2Y = tailY[i];
+        tailX[i] = prevX;
+        tailY[i] = prevY;
+        prevX = prev2X;
+        prevY = prev2Y;
+    }
 
-	case LEFT:
-		x--;
-		break;
-	case RIGHT:
-		x++;
-		break;
-	case UP:
-		y--;
-		break;
-	case DOWN:
-		y++;
-		break;
-	}
-	if (x > width || x < 0 || y> height || y < 0) {
-		gameOver = true;
-	}
-	if (x == fruitx && y == fruity) {
-		score += 10;
-		fruitx = rand() % width;
-		fruity = rand() % height;
-		nTail++;
-	}
+    switch (dir) {
+    case LEFT:  x--; break;
+    case RIGHT: x++; break;
+    case UP:    y--; break;
+    case DOWN:  y++; break;
+    default: break;
+    }
+
+    // Hitting a wall ends the game.
+    if (x < 0 || x >= width || y < 0 || y >= height)
+        gameOver = true;
+
+    // Running into your own tail ends the game.
+    for (int i = 0; i < nTail; i++) {
+        if (tailX[i] == x && tailY[i] == y)
+            gameOver = true;
+    }
+
+    // Eating the fruit grows the snake and respawns the fruit.
+    if (x == fruitX && y == fruitY) {
+        score += 10;
+        nTail++;
+        SpawnFruit();
+    }
 }
 
-int main()
-{
-	Setup();
-	while (gameOver == false) {
-		Draw();
-		input();
-		Logic();
-		Sleep(200);
-	}
-	return 0;
+int main() {
+    srand(static_cast<unsigned>(time(nullptr)));
+    Setup();
+    while (!gameOver) {
+        Draw();
+        Input();
+        Logic();
+        sleepMs(150);
+    }
+
+    clearScreen();
+    cout << "Game over! Final score: " << score << "\n";
+    return 0;
 }
-
-// Run program: Ctrl + F5 or Debug > Start Without Debugging menu
-// Debug program: F5 or Debug > Start Debugging menu
-
-// Tips for Getting Started: 
-//   1. Use the Solution Explorer window to add/manage files
-//   2. Use the Team Explorer window to connect to source control
-//   3. Use the Output window to see build output and other messages
-//   4. Use the Error List window to view errors
-//   5. Go to Project > Add New Item to create new code files, or Project > Add Existing Item to add existing code files to the project
-//   6. In the future, to open this project again, go to File > Open > Project and select the .sln file
